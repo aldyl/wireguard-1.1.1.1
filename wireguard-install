@@ -1,0 +1,70 @@
+#!/bin/bash
+#set -x
+#[ $UID -eq 0 ] || exec sudo  "$0" "@" # Execute the script with super rigths
+
+BASE_CONF=/home/$USER/opt/wireguard
+
+mkdir -p $BASE_CONF && cd $BASE_CONF
+
+mkdir -p wg-tool
+cd wg-tool
+sudo apt install -f git build-essential openresolv
+[ $1 == "--download" ] &&  git clone https://github.com/WireGuard/wireguard-tools.git
+cd wireguard-tools
+cd src
+make
+sudo make install
+cd $BASE_CONF
+
+mkdir -p wg-keys
+cd wg-keys
+
+version_wgcf="2.2.15"
+wgcf_binary="wgcf_${version_wgcf}_linux_amd64"
+
+[ $1 == "--download" ] && wget https://github.com/ViRb3/wgcf/releases/download/v${version_wgcf}/wgcf_${version_wgcf}_linux_amd64
+chmod +x $wgcf_binary
+./$wgcf_binary register
+./$wgcf_binary generate
+./$wgcf_binary update
+./$wgcf_binary status
+./$wgcf_binary trace
+cd $BASE_CONF
+
+bin="/home/$USER/bin"
+
+cat >"$bin/wgon" <<EOF
+#!/bin/bash
+unset http_proxy
+unset https_proxy
+sudo modprobe ipv6
+sudo modprobe wireguard
+sudo wg-quick down $BASE_CONF/wg-keys/wgcf-profile.conf
+sudo wg-quick up $BASE_CONF/wg-keys/wgcf-profile.conf
+$BASE_CONF/wg-keys/wgcf_${version_wgcf}_linux_amd64 trace
+
+echo "wg on"
+
+EOF
+
+
+cat >"$bin/wgoff" <<EOF
+#!/bin/bash
+unset http_proxy
+unset https_proxy
+sudo modprobe ipv6
+sudo modprobe wireguard
+sudo wg-quick down $BASE_CONF/wg-keys/wgcf-profile.conf
+$BASE_CONF/wg-keys/wgcf_$version_wgcf trace
+
+echo "wg-off"
+EOF
+
+sudo chmod +x $bin/wgon
+sudo chmod +x $bin/wgoff
+
+echo "Helper
+
+wgon || wgoff
+
+For download binaries --download"
