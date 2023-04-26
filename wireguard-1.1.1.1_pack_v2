@@ -6,17 +6,18 @@ mkdir -p $BASE_CONF && cd $BASE_CONF
 #!/bin/bash
 
 # Check if running with superuser privileges
-if [[ $(id -u) -ne 0 ]]; then   # Check if the script is being run by root user.
-    echo "Please run this script as root or using sudo"    # Prompt to run the script again with root user or sudo privileges.
+if [[ $(id -u) -ne 0 ]]; then                           # Check if the script is being run by root user.
+    echo "Please run this script as root or using sudo" # Prompt to run the script again with root user or sudo privileges.
     exit 1
 fi
 
 # Set variables
-         BASE_CONF="/opt/wireguard"   # Set a readonly variable for the base directory where the configuration files will be stored.
-         wgcf_binary=""
+BASE_CONF="/opt/wireguard" # Set a readonly variable for the base directory where the configuration files will be stored.
+wgcf_binary=""
 
 # Function to uninstall WireGuard tools
 function uninstall_wireguard_tools() {
+
     if [[ -d "$BASE_CONF/wg-tool/wireguard-tools/src" ]]; then
         set -e
         sudo rm /usr/bin/wg
@@ -35,111 +36,98 @@ function uninstall_wireguard_tools() {
 }
 
 function uninstall_wireguard() {
+
     # Stop WireGuard if it is currently enabled
     wg-quick down "${BASE_CONF}/wg-keys/wgcf-profile.conf" >/dev/null 2>&1 # Run command to stop the wireguard service.
-    
+
     uninstall_wireguard_tools
 
     # Remove binaries and directories
-    rm -rf "$BASE_CONF" "/usr/local/bin/wgon" "/usr/local/bin/wgoff"    # Delete the directories, binaries and config files.
+    rm -rf "$BASE_CONF" "/usr/local/bin/wgon" "/usr/local/bin/wgoff" # Delete the directories, binaries and config files.
 }
 
 function install_wireguard() {
 
     # Try 3 times to fetch the latest version from Github
     for i in {1..3}; do
-        local lastest_version=$(curl --silent "https://github.com/ViRb3/wgcf/releases" | grep "releases/tag/" | sed  's/.*>v\(.*\)<\/a>.*/\1/p'  - | head -n1)
-    
+        local lastest_version=$(curl --silent "https://github.com/ViRb3/wgcf/releases" | grep "releases/tag/" | sed 's/.*>v\(.*\)<\/a>.*/\1/p' - | head -n1)
+
         if [[ -n $lastest_version ]]; then
             echo "Lastest version: $lastest_version"
-        break
+            break
         else
             echo "Failed to fetch latest version (attempt $i)"
         fi
-    
+
         if [[ $i -eq 3 ]]; then
             echo "Unable to fetch latest version after 3 attempts. Exiting."
             exit 1
-    fi
-    
-    sleep 5s
-    done
+        fi
 
-
-    local download=true
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v| --version)
-                version="$2"
-                shift 2
-                ;;
-            --not-download)
-                download=false
-                shift
-                ;;
-            *)
-                echo "Invalid argument: $1"
-                exit 1
-                ;;
-        esac
+        sleep 5s
     done
 
     # Install required packages
     apt install -y git build-essential openresolv
 
     # Clone WireGuard tools and compile
-    mkdir -p "$BASE_CONF/wg-tool" && \
-        cd "$BASE_CONF/wg-tool" && \
-        git clone https://github.com/WireGuard/wireguard-tools.git && \
-        cd wireguard-tools/src && \
-        make && \
+    mkdir -p "$BASE_CONF/wg-tool" &&
+        cd "$BASE_CONF/wg-tool" &&
+        git clone https://github.com/WireGuard/wireguard-tools.git &&
+        cd wireguard-tools/src &&
+        make &&
         make install
 
     # Generate WireGuard config files
 
-    mkdir -p "$BASE_CONF/wg-keys" && \
-        cd "$BASE_CONF/wg-keys" && \
+    mkdir -p "$BASE_CONF/wg-keys" &&
+        cd "$BASE_CONF/wg-keys" &&
         if [[ $download == true ]]; then
             wgcf_binary="wgcf_${lastest_version}_linux_amd64"
-            
+
             max_retries=3
             retry_count=0
             while [[ $retry_count -lt $max_retries ]]; do
-              if wget "https://github.com/ViRb3/wgcf/releases/download/v${lastest_version}/${wgcf_binary}"; then
-                echo "Downloaded ${wgcf_binary}"
-                break  # exit the loop on success
-              else
-                echo "Failed to download ${wgcf_binary} - retrying..."
-                ((retry_count++))
-              fi
+                if wget "https://github.com/ViRb3/wgcf/releases/download/v${lastest_version}/${wgcf_binary}"; then
+                    echo "Downloaded ${wgcf_binary}"
+                    break # exit the loop on success
+                else
+                    echo "Failed to download ${wgcf_binary} - retrying..."
+                    ((retry_count++))
+                fi
             done
 
             if [[ $retry_count -ge $max_retries ]]; then
-              echo "Max retries reached. Failed to download ${wgcf_binary}" >&2
+                echo "Max retries reached. Failed to download ${wgcf_binary}" >&2
             fi
 
         fi
-    
-    chmod 600 "${BASE_CONF}/wg-keys/${wgcf_binary}"  # Set the permissions of the downloaded binary file as read and write for the owner.
-    chmod +x "${BASE_CONF}/wg-keys/${wgcf_binary}" 
 
-    command -v "${BASE_CONF}/wg-keys/${wgcf_binary}" >/dev/null 2>&1 || { echo >&2 "Error: ${wgcf_binary} is required but not installed. Aborting."; exit 1; }
-    
-    "${BASE_CONF}/wg-keys/${wgcf_binary}" register   # Register a new wgcf account.
-    "${BASE_CONF}/wg-keys/${wgcf_binary}" generate   # Generate configuration files.
-    "${BASE_CONF}/wg-keys/${wgcf_binary}" update     # Update WireGuard connection.
-    "${BASE_CONF}/wg-keys/${wgcf_binary}" status     # Get the status of WireGuard connection.
-    "${BASE_CONF}/wg-keys/${wgcf_binary}" trace      # Debugging option to collect tracing data.
+    chmod 600 "${BASE_CONF}/wg-keys/${wgcf_binary}" # Set the permissions of the downloaded binary file as read and write for the owner.
+    chmod +x "${BASE_CONF}/wg-keys/${wgcf_binary}"
 
-    # Create scripts for starting and stopping WireGuard
-    readonly bin="/usr/local/bin"    # Set readonly variable for the binary directory.
-    cat >"${bin}/wgon" <<EOF  # Define a script named "wgon".
+    command -v "${BASE_CONF}/wg-keys/${wgcf_binary}" >/dev/null 2>&1 || {
+        echo >&2 "Error: ${wgcf_binary} is required but not installed. Aborting."
+        exit 1
+    }
+
+    "${BASE_CONF}/wg-keys/${wgcf_binary}" register # Register a new wgcf account.
+    "${BASE_CONF}/wg-keys/${wgcf_binary}" generate # Generate configuration files.
+    "${BASE_CONF}/wg-keys/${wgcf_binary}" update   # Update WireGuard connection.
+    "${BASE_CONF}/wg-keys/${wgcf_binary}" status   # Get the status of WireGuard connection.
+    "${BASE_CONF}/wg-keys/${wgcf_binary}" trace    # Debugging option to collect tracing data.
+
+}
+
+ function  copy_scripts() {
+
+        # Create scripts for starting and stopping WireGuard
+        readonly bin="/usr/local/bin" # Set readonly variable for the binary directory.
+        cat >"${bin}/wgon" <<EOF      # Define a script named "wgon".
 #!/bin/bash
 
 # Check if running with superuser privileges
-if [[ $(id -u) -ne 0 ]]; then   # Check if the script is being run by root user.
+if [[ \$(id -u) -ne 0 ]]; then   # Check if the script is being run by root user.
     echo "Please run this script as root or using sudo"    # Prompt to run the script again with root user or sudo privileges.
     exit 1
 fi
@@ -154,42 +142,28 @@ unset https_proxy
 modprobe ipv6
 modprobe wireguard
 
-if "${BASE_CONF}/wg-keys/${wgcf_binary}" trace | grep -q "warp=on" >/dev/null 2>&1; then
-  echo "WireGuard is currently enabled"
-  sudo wg show
-  exit 0
-fi
 
-max_retries=3
-retry_count=0
-
-while [[ $retry_count -lt $max_retries ]]; do
-  wg-quick up "${BASE_CONF}/wg-keys/wgcf-profile.conf" >/dev/null 2>&1
-  
-  if "${BASE_CONF}/wg-keys/${wgcf_binary}" trace | grep -qF "warp=on"; then
-    printf "WireGuard connection established successfully\n"
-    sudo wg show
-    exit 0  # Exit the script on success
+  if sudo wg show | grep -q "interface"; then
+    echo "WireGuard status = 'active'"
+    exit 0
   fi
 
-  ((retry_count++))
+  printf "WireGuard connection attempt\n"
 
-  printf "WireGuard connection failed - retrying (attempt $retry_count)\n"
+  wg-quick up "/opt/wireguard/wg-keys/wgcf-profile.conf"
 
-done
-
-  if [[$retry_count -ge $max_retries ]]; then
-    printf "Max retries reached. Failed to establish WireGuard connection\n" >&2
-    exit 1
+  if sudo wg show | grep -q "interface"; then
+    echo "WireGuard status = 'active'"
+    exit 0
   fi
 
 EOF
 
-    cat >"${bin}/wgoff" <<EOF  # Define a script named "wgoff".
+        cat >"${bin}/wgoff" <<EOF # Define a script named "wgoff".
 #!/bin/bash
 
 # Check if running with superuser privileges
-if [[ $(id -u) -ne 0 ]]; then   # Check if the script is being run by root user.
+if [[ \$(id -u) -ne 0 ]]; then   # Check if the script is being run by root user.
     echo "Please run this script as root or using sudo"    # Prompt to run the script again with root user or sudo privileges.
     exit 1
 fi
@@ -200,29 +174,66 @@ modprobe ipv6
 modprobe wireguard
 
 if sudo wg show | grep -q "interface"; then    # Check if WireGuard is already running.
-    echo "WireGuard is enabled"
-    if wg-quick down "${BASE_CONF}/wg-keys/wgcf-profile.conf"; then
+    echo "WireGuard status = 'active'"
+    if wg-quick down "/opt/wireguard/wg-keys/wgcf-profile.conf" >/dev/null 2>&1; then
         echo "Successfully stopped WireGuard session."
     else
         echo "Failed to stop WireGuard session."
     fi
 else
-    echo "WireGuard is not currently enabled"
+    echo "WireGuard status = 'disabled'"
 fi
+
 EOF
 
-    sudo chmod +x "${bin}/wgon"    # Set the executable permission for the wgon script.
-    sudo chmod +x "${bin}/wgoff"   # Set the executable permission for the wgoff script.
+        sudo chmod +x "${bin}/wgon"  # Set the executable permission for the wgon script.
+        sudo chmod +x "${bin}/wgoff" # Set the executable permission for the wgoff script.
 
     echo -e "\nHelper:
 wgon to turn WireGuard ON.
 wgoff to turn WireGuard OFF.
-Use --not-download flag to not download binaries.\n"    # Display list of available script commands.
+wgui to launch visual interface
+" # Display list of available script commands.
 }
 
-if [[ $1 == "--uninstall" ]]; then    # If --uninstall flag passed, run uninstall function.
-    uninstall_wireguard
-else
-    uninstall_wireguard
-    install_wireguard "$@" # If --uninstall flag not passed, install WireGuard using install function.
-fi
+    download=true
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -v | --version)
+            version="$2"
+            shift 2
+            ;;
+        --not-download)
+            download=false
+            shift
+            ;;
+        --uninstall)
+            uninstall_wireguard
+            shift
+            ;;
+        --copy_scripts)
+            copy_scripts
+            shift
+            ;;
+        --install)
+            uninstall_wireguard
+            install_wireguard
+            copy_scripts
+            shift
+            ;;       
+        *)
+            echo "Invalid argument: $1"
+            exit 1
+            ;;
+        esac
+    done
+
+    echo -e "\nHelper:
+--install
+    --version       Set manual version download binaries
+    --not-download  No download binaries
+--copy_scripts      Recopy scripts
+--uninstall
+\n" # Display list of available script commands.
